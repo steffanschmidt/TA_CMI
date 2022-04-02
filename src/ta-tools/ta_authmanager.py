@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import requests
 
 class AuthorizerTA:
 
-    def __init__(self, userName: None, password: None):
+    def __init__(self, userName: str = None, password: str = None):
         self.TASession = None
-
         self.TACRSFTokenStorageName = "csrf-token"
         self.TALoginURL = "https://cmi.ta.co.at/portal/checkLogin.inc.php"
         self.TALoginUserNameFieldName = "username"
         self.TALoginPasswordFieldName = "passwort"
-        
-        self.userCredentials = {}
 
-        self.setUserName(setUserName)
-        self.setPassword(password)
+        self.userCredentials = {}
+        self.setCredentials(userName, password)
 
     def setUserName(self, userName: str = None):
         self.userName = userName
 
     def setPassword(self, password: str = None):
         self.password = password
+
+    def setCredentials(self, userName: str = None, password: str = None):
+        self.setUserName(userName)
+        self.setPassword(password)
 
     def validateUserName(self) -> bool:
         return self.userName and isinstance(self.userName, str)
@@ -38,25 +40,33 @@ class AuthorizerTA:
 
         return self.userCredentials
 
-    def setupTASession(self) -> requests.sessions.Session:
+    def setupSession(self) -> (bool, requests.sessions.Session, str):
+        TASessionMsg = None
+        TASessionStatus = False
         if not self.TASession:
             self.retreiveUserCredentials()
-            if self.retreiveCredentials:
+            if self.userCredentials:
                 self.TASession = requests.Session()
-                self.TASessionLoginResponse = self.TASession.post(self.TALoginURL, self.userCredentials)
-                if self.TASessionLoginResponse.status_code == "200":
-                    
+                TASessionLoginResponse = self.TASession.post(self.TALoginURL, self.userCredentials)
+                if TASessionLoginResponse.status_code == 200:
+                    TASessionCookies = TASessionLoginResponse.cookies
+                    TASessionCRSFToken = TASessionCookies[self.TACRSFTokenStorageName] if self.TACRSFTokenStorageName in TASessionCookies else None
+                    if TASessionCRSFToken:
+                        self.TASession.headers["authorization"] = TASessionCRSFToken
+                        TASessionStatus = True
+                    else:
+                        self.closeSession()
                 else:
-                    self.closeTASession()
+                    self.closeSession()
             else:
                 self.TASession = None
 
-        return self.TASession
+        return TASessionStatus, self.TASession, TASessionMsg
 
-    def closeTASession(self):
+    def closeSession(self):
         if self.TASession:
             self.TASession.close()
             self.TASession = None
 
 if __name__ == "__main__":
-    pass
+    AuthorizerTA = AuthorizerTA()
