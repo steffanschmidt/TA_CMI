@@ -7,13 +7,15 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 sys.path.insert(1, f"{Path(__file__).parent}/../auth")
 from ta_authmanager import AuthorizerTA
+from ta_baseworker import BaseWorkerTA
 
-class DataRetrieverTA(AuthorizerTA):
+class DataRetrieverTA(BaseWorkerTA, AuthorizerTA):
 
     def __init__(self, userName: str = None, password: str = None):
-        super().__init__(userName, password)
-        # General Information
-        self.requestTimeoutTime = 5
+        AuthorizerTA.__init__(self, userName, password)
+        BaseWorkerTA.__init__(self)
+        # General Request Information
+        self.defaultRequestTimeoutTime = 15
         
         # TA Profile and CMI Information - This is display under the tab Overview
         self.TAPortalOverviewURL = "https://cmi.ta.co.at/portal/ta/overview/"
@@ -80,66 +82,12 @@ class DataRetrieverTA(AuthorizerTA):
         self.TAModeFieldName = "mode"
         self.TACreatorFieldName = "creator"
         self.TAProfileFieldName = "profil"
-        self.dateFormat = "%Y-%m-%d"
-        self.TADateTimeRequestFormat = f"{self.dateFormat} %H:%M:%S"
-        self.defaultTARequestDays = 1
 
-        # Used for collecting data into a Dataframe
-        self.dataMeasurementTime = "Time"
-        self.dataSensorIDHeader = "SensorID"
-        self.dataSensorNameHeader = "SensorName"
-        self.dataTypeHeader = "Type"
-        self.dataValueHeader = "Value"
-        self.dataUnitHeader = "Unit"
+        self.setRequestTimeout(self.defaultRequestTimeoutTime)
 
-        self.TADataCollectorHeaders = [
-            self.dataMeasurementTime,
-            self.dataSensorIDHeader,
-            self.dataSensorNameHeader,
-            self.dataTypeHeader,
-            self.dataValueHeader,
-            self.dataUnitHeader
-        ]
-
-
-    """
-
-    """
-    def convertDateTimeToString(self, dateTime: dt.datetime = None) -> str:
-        dateTimeString = None
-        if isinstance(dateTime, (dt.date, dt.datetime)):
-            try:
-                dateTimeString = dt.datetime.strftime(dateTime, self.TADateTimeRequestFormat)
-            except:
-                dateTimeString = None
-    
-        if not isinstance(dateTimeString, str):
-            dateTimeString = None
-
-        return dateTimeString
-
-    """
-
-    """
-    def convertStringToDateTime(self, dateTimeString: str = None) -> dt.datetime:
-        dateTime = None
-        if isinstance(dateTimeString, str):
-            try:
-                dateTime = dt.datetime.strptime(dateTimeString, self.TADateTimeRequestFormat)
-            except:
-                dateFormattedTime = dt.datetime.strptime(dateTimeString, self.dateFormat)
-            finally:
-                dateTime = None
-        elif isinstance(dateTimeString, dt.datetime):
-            dateTime = dateTimeString
-        elif isinstance(dateTimeString, dt.date):
-            dateTimeString = self.convertDateTimeToString(dateTimeString)
-            dateTime = dt.datetime.strptime(dateTimeString, self.TADateRequestFormat)
-
-        if dateTime and not isinstance(dateTime, dt.datetime):
-            dateTime = None
-
-        return dateTime
+    def setRequestTimeout(self, requestTimeOut: int = None):
+        if isinstance(requestTimeOut, int):
+            self.requestTimeoutTime = requestTimeOut
 
     """
 
@@ -304,17 +252,7 @@ class DataRetrieverTA(AuthorizerTA):
                 profileNameValid = self.validateProfile(CMIName, profileName)
                 if profileNameValid:
                     self.retrieveTAUserName()
-                    if not fromDate and not toDate:
-                        toDate = dt.datetime.now().replace(microsecond = 0)
-                        fromDate = toDate - dt.timedelta(days = self.defaultTARequestDays)
-                    elif not fromDate:
-                        toDate = self.convertStringToDateTime(toDate)
-                        fromDate = toDate - dt.timedelta(days = self.defaultTARequestDays) if toDate else None
-                    elif not toDate:
-                        toDate = dt.datetime.now()
-
-                    sanitizedFromDate = self.convertDateTimeToString(fromDate)
-                    sanitizedToDate = self.convertDateTimeToString(toDate)
+                    sanitizedFromDate, sanitizedToDate = self.processDateRange(fromDate, toDate)
                     if sanitizedFromDate and sanitizedToDate:
                         baseDataRequest = {
                             self.TACMIFieldName: CMIName,
@@ -371,12 +309,10 @@ class DataRetrieverTA(AuthorizerTA):
                     sensorUnitInformation = rawTADataResponseData[self.TADataUnitsInformationHeader]
                     sensorUnits = {sensorID: sensorUnitData[self.TADataUnitHeader] for sensorID, sensorUnitData in sensorUnitInformation.items()}
                     sensorDescriptions = rawTADataResponseData[self.TADataDescriptionHeader]
-                    print(sensorUnits)
-                    print(sensorDescriptions)
                     userSetSensorLineColours = rawTADataResponseData[self.TADataColourHeader]
                     userSetSensorFactors = rawTADataResponseData[self.TADataFactorHeader]
                     sensorReadingsContainer = rawTADataResponseData[self.TADataSensorReadingsHeader]
-                    for sensorReadings in sensorReadingsContainer:
+                    for sensorReadingsIndex, sensorReadings in enumerate(sensorReadingsContainer):
                         sensorReadingTime = sensorReadings[self.TADataSensorReadingTimeHeader] if self.TADataSensorReadingTimeHeader in sensorReadings else None
                         if sensorReadingTime is not None:
                             sensorData = {sensorName: sensorValue for sensorName, sensorValue in sensorReadings.items() if sensorName != self.TADataSensorReadingTimeHeader}
@@ -406,9 +342,6 @@ class DataRetrieverTA(AuthorizerTA):
             self.dataMeasurementTime
         ])
 
-        # print(TADataResponseData[self.dataSensorNameHeader].unique())
-        print(TADataResponseData[self.dataSensorIDHeader].unique())
-
         return TADataResponseStatus, TADataResponseData, TADataResponseMsg
 
     def retrieveAnalogData(self, CMIName: str = None, profileName: None = str, fromDate: str = None, toDate: str = None):
@@ -424,13 +357,12 @@ class DataRetrieverTA(AuthorizerTA):
         else:
             analogDataMsg = analogRequestInformation[2]
 
-        return analogRequestStatus, 
+        return analogRequestStatus, analogData, analogDataMsg
 
     def retrieveDigitalData(self, CMIName: str = None, profileName: None = str, fromDate: str = None, toDate: str = None):
         digitalDataStatus = False
         digitalData = []
         digitalDataMsg = None
-
         digitalRequestInformation = self.composeTADataRequest(CMIName, profileName, "digital", fromDate, toDate)
         digitalRequestStatus = digitalRequestInformation[0]
         if digitalRequestStatus:
